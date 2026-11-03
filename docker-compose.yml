@@ -1,0 +1,169 @@
+# ObservIA-DC — pilote V1.0 en mode ombre (SAD §12, décision D15 : Compose, puis k3s
+# avant l'ouverture du niveau 1). Versions figées (feuille de route §3) : à revérifier
+# et à exporter en archives hors ligne avant l'arrivée sur site.
+#
+#   cp .env.example .env   # puis renseigner les secrets
+#   docker compose up -d
+#   docker compose --profile setup run --rm ollama-pull   # modèles locaux, une seule fois
+#   docker compose run --rm migrate python -m shared.admin add-source iot-main IOT
+#
+# Aucun port de base, de file ni d'OPA n'est exposé (SAD §12, précision 3).
+
+x-app: &app
+  build: ./observia
+  image: observia/app:1.0.0
+  restart: unless-stopped
+  env_file: .env
+  environment: &app-env
+    OBSERVIA_DB_DSN: postgresql://observia_app:${APP_DB_PASSWORD}@db:5432/observia
+    # Lecture seule : outils MCP et requêtes des règles de détection (dont CUSTOM_SQL saisi par l'API)
+    OBSERVIA_DB_READER_DSN: postgresql://observia_mcp:${MCP_DB_PASSWORD}@db:5432/observia
+    OBSERVIA_CATALOG_PATH: /policies/catalog.yaml
+    OBSERVIA_OPA_URL: http://opa:8181
+    OBSERVIA_LOKI_URL: http://loki:3100
+    OBSERVIA_MCP_URL: http://mcp:8001/mcp
+    OBSERVIA_OLLAMA_URL: http://ollama:11434
+    OBSERVIA_MODEL_GATEWAY_URL: http://ollama:11434/v1
+    OBSERVIA_KNOWLEDGE_DIR: /knowledge/runbooks
+  volumes:
+    - ./policies:/policies:ro
+    - ./knowledge:/knowledge:ro
+  depends_on:
+    migrate: {condition: service_completed_successfully}
+  logging: &logging
+    driver: json-file
+    options: {max-size: "20m", max-file: "5"}   # feuille de route phase 3 : journaux Docker limités
+
+services:
+  db:       # image « ha » : TimescaleDB + pgvector (RAG) dans un seul PostgreSQL
+    image: timescale/timescaledb-ha:pg16-ts2.17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: observia
+      POSTGRES_USER: observia
+      POSTGRES_PASSWORD: ${OWNER_DB_PASSWORD:?définir OWNER_DB_PASSWORD}
+      INGEST_DB_PASSWORD: ${INGEST_DB_PASSWORD:?}
+      MCP_DB_PASSWORD: ${MCP_DB_PASSWORD:?}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?}
+    volumes:
+      - pgdata:/home/postgres/pgdata/data   # PGDATA de l'image timescaledb-ha
+      - ./deploy/db-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U observia -d observia"]
+      interval: 5s
+      retries: 20
+    logging: *logging
+
+  migrate:   # schéma, rétention, rôles, règles initiales, synchronisation du catalogue
+    build: ./observia
+    image: observia/app:1.0.0
+    command: python -m shared.migrate
+    environment:
+      OBSERVIA_DB_DSN: postgresql://observia:${OWNER_DB_PASSWORD}@db:5432/observia
+      OBSERVIA_CATALOG_PATH: /policies/catalog.yaml
+    volumes: [./policies:/policies:ro]
+    depends_on:
+      db: {condition: service_healthy}
+
+  immudb:    # journal d'audit inviolable (D12) ; retirer en profil A− (OBSERVIA_IMMUDB_ENABLED=false)
+    image: codenotary/immudb:1.9.5
+    restart: unless-stopped
+    volumes: [immudata:/var/lib/immudb]
+    logging: *logging
+
+  loki:      # logs du datacenter (D5)
+    image: grafana/loki:3.3.2
+    restart: unless-stopped
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes: [lokidata:/loki]
+    logging: *logging
+
+  opa:       # garde-fou (D3) : politiques et catalogue en lecture seule
+    image: openpolicyagent/opa:1.4.2
+    restart: unless-stopped
+    command: ["run", "--server", "--addr=0.0.0.0:8181", "--log-level=info", "/policies"]
+    volumes: [./policies:/policies:ro]
+    logging: *logging
+
+  collector: # collecteur de périphérie (D16) ; choix final après le PoC de protocoles (H5)
+    image: telegraf:1.33
+    restart: unless-stopped
+    env_file: .env
+    volumes: [./collector/telegraf.conf:/etc/telegraf/telegraf.conf:ro]
+    depends_on: [ingestion]
+    logging: *logging
+
+  ingestion:
+    <<: *app
+    command: uvicorn ingestion.main:app --host 0.0.0.0 --port 8000 --proxy-headers
+    environment:
+      <<: *app-env
+      OBSERVIA_DB_DSN: postgresql://observia_ingest:${INGEST_DB_PASSWORD}@db:5432/observia
+    ports: ["8000:8000"]   # à placer derrière le proxy TLS/mTLS (NFR-01)
+
+  detection:
+    <<: *app
+    command: python -m detection.worker
+
+  mcp:
+    <<: *app
+    command: python -m mcp_server.main
+
+  agent:     # aucun secret d'infrastructure : seulement la passerelle modèle et le jeton MCP (NFR-02)
+    <<: *app
+    command: python -m agent.worker
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      ollama: {condition: service_started}
+
+  knowledge: # indexation RAG : runbooks (Git) + incidents validés par un humain
+    <<: *app
+    command: python -m knowledge.indexer
+
+  ollama:    # modèle local (H1 invalidée) : aucune donnée ne quitte le site ; pas de port exposé
+    image: ollama/ollama:0.9.0
+    restart: unless-stopped
+    environment:
+      OLLAMA_KEEP_ALIVE: 24h          # garde le modèle chargé : évite des dizaines de secondes de rechargement
+      OLLAMA_CONTEXT_LENGTH: "16384"  # prompt système + outils + RAG dépassent le contexte par défaut
+      OLLAMA_NUM_PARALLEL: "1"        # CPU : une inférence à la fois (agent_concurrency = 1)
+    volumes: [ollamadata:/root/.ollama]
+    # GPU NVIDIA éventuel : décommenter
+    # deploy: {resources: {reservations: {devices: [{driver: nvidia, count: all, capabilities: [gpu]}]}}}
+    logging: *logging
+
+  ollama-pull:  # une fois, en préparation (phase 0) ; le volume ollamadata s'exporte ensuite hors ligne (H6)
+    image: ollama/ollama:0.9.0
+    profiles: [setup]
+    environment: {OLLAMA_HOST: "ollama:11434"}
+    entrypoint: ["sh", "-c", "ollama pull $${MODEL:-qwen2.5:7b-instruct} && ollama pull $${EMBED_MODEL:-nomic-embed-text}"]
+    depends_on: [ollama]
+
+  executor:  # V1.0 : démarré désactivé (EXECUTION_ENABLED=false)
+    <<: *app
+    command: python -m executor.worker
+    environment:
+      <<: *app-env
+      OBSERVIA_EXECUTION_ENABLED: "false"
+
+  notifier:
+    <<: *app
+    command: python -m notification.worker
+
+  audit:     # réplique le tampon PostgreSQL vers immudb
+    <<: *app
+    command: python -m audit.replicator
+
+  console-api:
+    <<: *app
+    command: uvicorn console_api.main:app --host 0.0.0.0 --port 8080 --proxy-headers
+    ports: ["8080:8080"]   # à placer derrière le proxy TLS ; SSO via OIDC
+
+  # console (Next.js, D13) : à venir. Observabilité interne (D14 : Prometheus, Loki distinct,
+  # Grafana) : à ajouter avec l'instrumentation (FR-23, V1.1), hors profil réduit A−.
+
+volumes:
+  ollamadata:
+  pgdata:
+  immudata:
+  lokidata:

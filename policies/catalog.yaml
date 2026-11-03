@@ -1,0 +1,118 @@
+# Catalogue d'actions fermé (FR-11, SAD §9.1). Versionné dans Git, chargé par OPA (data.catalog)
+# et par le garde-fou Python. Le niveau est fixé ici, jamais par l'agent (BR-01).
+#
+# Liste de départ issue des exemples du SPSD §3.3 ; la liste réelle des 20 premières actions
+# et leurs niveaux est à valider par [CLI] et [RSSI] (feuille de route, phase 7).
+#
+#   base_level      : 1, 2 ou 3 (SPSD §3.3)
+#   non_intrusive   : vrai pour les actions N1 sans effet sur l'équipement ; elles ne sont pas
+#                     relevées en N3 par la criticité de la cible (SAD §9.2, « sauf N1 en lecture »)
+#   allowed_targets : types d'équipement (« * » = tous) et environnements autorisés
+#   params_schema   : JSON Schema des paramètres ; paramètres invalides → REFUSED
+catalog:
+  open_ticket:
+    base_level: 1
+    reversible: true
+    non_intrusive: true
+    allowed_targets: {types: ["*"], env: [TEST, PROD]}
+    params_schema:
+      type: object
+      properties:
+        summary: {type: string, maxLength: 500}
+        priority: {enum: [P1, P2, P3, P4]}
+      additionalProperties: false
+
+  increase_collection_rate:
+    base_level: 1
+    reversible: true
+    non_intrusive: true
+    rollback_ref: restore_collection_rate
+    allowed_targets: {types: ["*"], env: [TEST, PROD]}
+    params_schema:
+      type: object
+      properties:
+        interval_s: {type: integer, minimum: 1, maximum: 60}
+        duration_min: {type: integer, minimum: 1, maximum: 240}
+      additionalProperties: false
+
+  restore_collection_rate:
+    base_level: 1
+    reversible: true
+    non_intrusive: true
+    allowed_targets: {types: ["*"], env: [TEST, PROD]}
+    params_schema: {type: object, additionalProperties: false}
+
+  rerun_monitoring_job:
+    base_level: 1
+    reversible: true
+    non_intrusive: true
+    allowed_targets: {types: ["*"], env: [TEST, PROD]}
+    params_schema:
+      type: object
+      properties:
+        job: {type: string, pattern: "^[A-Za-z0-9_.-]{1,64}$"}
+      required: [job]
+      additionalProperties: false
+
+  restart_service:
+    base_level: 2
+    reversible: false
+    allowed_targets: {types: [server, service, vm], env: [TEST, PROD]}
+    params_schema:
+      type: object
+      properties:
+        service: {type: string, pattern: "^[A-Za-z0-9_.@-]{1,64}$"}
+      required: [service]
+      additionalProperties: false
+
+  migrate_workload:
+    base_level: 2
+    reversible: true
+    rollback_ref: migrate_workload_back
+    allowed_targets: {types: [rack, server, hypervisor], env: [TEST, PROD]}
+    params_schema:
+      type: object
+      properties:
+        destination: {type: string, maxLength: 128}
+      additionalProperties: false
+
+  migrate_workload_back:
+    base_level: 2
+    reversible: true
+    allowed_targets: {types: [rack, server, hypervisor], env: [TEST, PROD]}
+    params_schema: {type: object, additionalProperties: false}
+
+  adjust_cooling:
+    base_level: 2
+    reversible: true
+    rollback_ref: adjust_cooling
+    allowed_targets: {types: [rack, crac, zone], env: [TEST, PROD]}
+    params_schema:
+      type: object
+      properties:
+        fan_speed_pct: {type: integer, minimum: 30, maximum: 100}
+      required: [fan_speed_pct]
+      additionalProperties: false
+
+  power_cut_rack:
+    base_level: 3
+    reversible: false
+    allowed_targets: {types: [rack], env: [TEST, PROD]}
+    params_schema: {type: object, additionalProperties: false}
+
+  emergency_shutdown:
+    base_level: 3
+    reversible: false
+    allowed_targets: {types: ["*"], env: [TEST, PROD]}
+    params_schema: {type: object, additionalProperties: false}
+
+  site_failover:
+    base_level: 3
+    reversible: false
+    allowed_targets: {types: [site], env: [PROD]}
+    params_schema:
+      type: object
+      properties:
+        destination_site: {type: string, maxLength: 64}
+      required: [destination_site]
+      additionalProperties: false

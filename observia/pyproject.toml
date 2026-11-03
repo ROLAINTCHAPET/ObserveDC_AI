@@ -1,0 +1,36 @@
+[project]
+name = "observia"
+version = "1.0.0"
+description = "ObservIA-DC — agent d'observabilité IA borné par un garde-fou formel"
+requires-python = ">=3.10"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  "pydantic>=2.7",
+  "pydantic-settings>=2.3",
+  "asyncpg>=0.29",
+  "httpx>=0.27",
+  "pyyaml>=6",
+  "jsonschema>=4.22",
+  "pyjwt[crypto]>=2.8",
+  "mcp>=2.3,<3",
+]
+
+[project.optional-dependencies]
+immudb = ["immudb-py>=1.5"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["shared*", "ingestion*", "detection*", "agent*", "mcp_server*", "guardrail*",
+           "executor*", "notification*", "audit*", "console_api*"]
