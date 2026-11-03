@@ -10,7 +10,9 @@
 # Aucun port de base, de file ni d'OPA n'est exposé (SAD §12, précision 3).
 
 x-app: &app
-  build: ./observia
+  build:
+    context: ./observia
+    args: {INSTALL_IMMUDB: "${INSTALL_IMMUDB:-0}"}
   image: observia/app:1.0.0
   restart: unless-stopped
   env_file: .env
@@ -55,7 +57,9 @@ services:
     logging: *logging
 
   migrate:   # schéma, rétention, rôles, règles initiales, synchronisation du catalogue
-    build: ./observia
+    build:
+      context: ./observia
+      args: {INSTALL_IMMUDB: "${INSTALL_IMMUDB:-0}"}
     image: observia/app:1.0.0
     command: python -m shared.migrate
     environment:
@@ -65,9 +69,12 @@ services:
     depends_on:
       db: {condition: service_healthy}
 
-  immudb:    # journal d'audit inviolable (D12) ; retirer en profil A− (OBSERVIA_IMMUDB_ENABLED=false)
+  immudb:    # journal d'audit inviolable (D12) : --profile immudb, avec INSTALL_IMMUDB=1 et OBSERVIA_IMMUDB_ENABLED=true
     image: codenotary/immudb:1.9.5
+    profiles: [immudb]
     restart: unless-stopped
+    environment:
+      IMMUDB_ADMIN_PASSWORD: ${OBSERVIA_IMMUDB_PASSWORD:-immudb}
     volumes: [immudata:/var/lib/immudb]
     logging: *logging
 
@@ -85,8 +92,9 @@ services:
     volumes: [./policies:/policies:ro]
     logging: *logging
 
-  collector: # collecteur de périphérie (D16) ; choix final après le PoC de protocoles (H5)
+  collector: # collecteur de périphérie (D16) : --profile collector, une fois CARD_SOURCE_KEY et telegraf.conf prêts (H5)
     image: telegraf:1.33
+    profiles: [collector]
     restart: unless-stopped
     env_file: .env
     volumes: [./collector/telegraf.conf:/etc/telegraf/telegraf.conf:ro]

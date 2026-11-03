@@ -21,6 +21,7 @@ from shared.schemas import EventIn, NormalizedEvent
 log = logging.getLogger("ingestion")
 MAX_BATCH = 5000
 CACHE_TTL_S = 30.0
+MIN_REFRESH_S = 5.0  # rechargement forcé au plus toutes les 5 s (équipement inconnu)
 REJECT_AUDIT_INTERVAL_S = 60.0
 QUARANTINE_ALERT_INTERVAL_S = 600.0
 
@@ -117,6 +118,11 @@ async def ingest(request: Request, source: dict[str, Any], items: list[Any]) -> 
     pool = await get_pool(get_settings().ingest_dsn)
     accepted: list[NormalizedEvent] = []
     quarantined: list[tuple[str, Any]] = []
+    # Équipement enregistré depuis le dernier chargement du cache : on recharge une fois
+    # plutôt que de mettre ses premiers relevés en quarantaine
+    codes = {r.get("equipment") for r in items if isinstance(r, dict)}
+    if any(c and c not in cache.equipment for c in codes) and time.monotonic() - cache.loaded_at > MIN_REFRESH_S:
+        await cache.refresh(pool, force=True)
     for raw in items:
         try:
             event = EventIn.model_validate(raw)

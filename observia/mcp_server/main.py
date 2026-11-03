@@ -14,7 +14,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from mcp_server import tools
-from shared.config import get_settings
+from shared.config import get_settings, require_service_token
 
 READ_TOOLS = ("get_logs", "get_metrics", "get_topology", "get_incident_history", "search_knowledge")
 ACTION_TOOLS = ("propose_action",)
@@ -78,4 +78,5 @@ def build_app():
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
+    require_service_token(get_settings())
     uvicorn.run(build_app(), host="0.0.0.0", port=8001)

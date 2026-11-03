@@ -24,7 +24,7 @@ from agent.pseudonymize import Pseudonymizer
 from audit import log as audit
 from guardrail.catalog import load_catalog
 from shared import notify, outbox
-from shared.config import Settings, get_settings
+from shared.config import Settings, get_settings, require_service_token
 from shared.db import get_pool
 
 log = logging.getLogger("agent")
@@ -192,6 +192,7 @@ class AgentService:
 
 async def main() -> None:
     settings = get_settings()
+    require_service_token(settings)
     pool = await get_pool(settings.db_dsn)
     gateway = ModelGateway(settings.model_gateway_url, settings.model_name, settings.model_api_key,
                            settings.model_timeout_s, temperature=settings.model_temperature)

@@ -31,11 +31,12 @@ GRANT USAGE ON SCHEMA obs TO observia_ingest_role, observia_reader_role, observi
 GRANT SELECT ON obs.source, obs.equipment TO observia_ingest_role;
 GRANT INSERT ON obs.event, obs.quarantine, obs.audit_log, obs.outbox TO observia_ingest_role;
 GRANT SELECT ON obs.audit_log TO observia_ingest_role;
+GRANT SELECT (id) ON obs.outbox TO observia_ingest_role;  -- INSERT … RETURNING id (alerte de quarantaine)
 GRANT USAGE ON SEQUENCE obs.quarantine_id_seq, obs.audit_log_id_seq, obs.outbox_id_seq TO observia_ingest_role;
 
 -- Outils MCP de lecture : lecture seule, sans accès aux tables de contrôle
 GRANT SELECT ON obs.event, obs.equipment, obs.equipment_dependency, obs.incident,
-  obs.incident_event, obs.action_request, obs.execution, obs.detection_rule
+  obs.incident_event, obs.agent_run, obs.action_request, obs.execution, obs.detection_rule
   TO observia_reader_role;
 
 -- Requêtes de détection (gabarits et CUSTOM_SQL saisi par l'API) : même rôle lecture seule,
@@ -47,3 +48,5 @@ GRANT SELECT (source_id, received_at, reason) ON obs.quarantine TO observia_read
 GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA obs TO observia_app_role;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA obs TO observia_app_role;
 REVOKE UPDATE ON obs.audit_log, obs.kill_switch FROM observia_app_role;
+-- Seule suppression autorisée : l'état transitoire de persistance des règles (M1), pas un fait décisionnel
+GRANT DELETE ON obs.rule_state TO observia_app_role;

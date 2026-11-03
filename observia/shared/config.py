@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     rag_index_interval_s: int = 300
     agent_concurrency: int = 2
     mcp_url: str = "http://localhost:8001/mcp"
-    mcp_token: str = "change-me-mcp-token"  # jeton de service à portée limitée
+    mcp_token: str = "change-me-mcp-token"  # jeton de service ; valeur d'exemple refusée au démarrage
 
     # Exécuteur : désactivé jusqu'à la V1.1
     execution_enabled: bool = False
@@ -97,6 +97,15 @@ class Settings(BaseSettings):
     @property
     def ingest_dsn(self) -> str:
         return self.db_ingest_dsn or self.db_dsn
+
+
+PLACEHOLDER_TOKEN = "change-me-mcp-token"
+
+
+def require_service_token(settings: Settings) -> None:
+    """Le jeton MCP protège l'accès aux outils : refus de démarrer avec la valeur d'exemple."""
+    if settings.mcp_token == PLACEHOLDER_TOKEN or len(settings.mcp_token) < 24:
+        raise SystemExit("OBSERVIA_MCP_TOKEN doit être défini (au moins 24 caractères) : voir deploy/gen-env.sh")
 
 
 @lru_cache
